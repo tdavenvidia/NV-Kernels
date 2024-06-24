@@ -20,6 +20,7 @@ place where this information is gathered.
    spec_ctrl
    accelerators/ocxl
    dma-buf-alloc-exchange
+   fwctl
    ebpf/index
    ELF
    ioctl/index
