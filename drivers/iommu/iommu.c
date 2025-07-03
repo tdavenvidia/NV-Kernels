@@ -1431,6 +1431,41 @@ static bool pci_devs_are_same_group(struct pci_dev *deva, struct pci_dev *devb)
 	return false;
 }
 
+/*
+ * SRIOV acts like a MFD and each PF/VF has an ACS capability. When we reach a
+ * VF the VF can use a unique group or re-use the group of the PF depending on
+ * the ACS flags of the entire VF/PF. If the PF is already part of some MFD or
+ * alias group then it
+ */
+static struct iommu_group *pci_get_sriov_group(struct pci_dev *pdev)
+{
+	struct pci_dev *piter = NULL;
+	struct iommu_group *group;
+
+	if (!pdev->is_virtfn)
+		return NULL;
+
+	pdev = pci_physfn(pdev);
+
+	group = iommu_group_get(&pdev->dev);
+	if (WARN_ON(!group))
+		return ERR_PTR(-EINVAL);
+
+	if (group->bus_data & BUS_DATA_PCI_NON_ISOLATED)
+		return group;
+
+	if (!pci_acs_enabled(pdev, PCI_ACS_ISOLATED))
+		return group;
+
+	for_each_pci_dev(piter)
+		if (piter->is_virtfn && piter->physfn == pdev &&
+		    !pci_acs_enabled(pdev, PCI_ACS_ISOLATED))
+			return group;
+
+	iommu_group_put(group);
+	return NULL;
+}
+
 static struct iommu_group *pci_get_alias_group(struct pci_dev *pdev,
 					       bool *non_isolated)
 {
@@ -1601,6 +1636,10 @@ struct iommu_group *pci_device_group(struct device *dev)
 	switch (pci_bus_isolated(pci_physfn(pdev)->bus)) {
 	case PCIE_ISOLATED: {
 		bool non_isolated;
+
+		group = pci_get_sriov_group(pdev);
+		if (group)
+			return group;
 
 		/* Check multi-function groups and same-bus devfn aliases */
 		group = pci_get_alias_group(pdev, &non_isolated);
